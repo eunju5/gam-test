@@ -1,0 +1,9 @@
+tools/
+data/
+.claude/
+시안.png
+주제.md
+.env
+README.md
+.gitignore
+.vercelignore
