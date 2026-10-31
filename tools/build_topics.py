@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import sys
 import datetime as dt
 from collections import Counter
@@ -82,6 +83,73 @@ def choice(qid, text, options, answer, basis, why):
     assert answer in options, f"{qid}: 정답이 선택지에 없습니다"
     return {"id": qid, "type": "choice", "text": text, "options": options,
             "answer": answer, "basis": basis, "why": why}
+
+
+# ── 점심값 (목록 맨 앞 주제) ───────────────────────────────────────────────────
+# 참가격 외식비 화면(HTML)에서 '서울' 행을 읽는다. 해마다 12월 값을 그해 값으로 쓴다.
+# 열 순서는 화면의 표 설명에 적힌 순서를 따르고, 그 설명이 바뀌면 멈춘다
+DINE_COLS = ["냉면", "비빔밥", "김치찌개 백반", "삼겹살(환산전)", "삼겹살(환산후)",
+             "자장면", "삼계탕", "칼국수", "김밥"]
+DINE_ORDER = "지역, 냉면, 비빔밥, 김치찌개(백반), 삼겹살(환산전), 삼겹살(환산후) ,자장면, 삼계탕, 칼국수, 김밥"
+
+
+def dineout_seoul(year):
+    h = io.open(RAW / "dineout" / f"seoul_{year}-12.html", encoding="utf-8").read()
+    assert DINE_ORDER in h, f"{year}: 외식비 표의 열 순서가 바뀌었습니다"
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", h, re.S):
+        cells = [re.sub(r"<[^>]+>|\s+", "", c)
+                 for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S)]
+        if cells and cells[0] == "서울":
+            return dict(zip(DINE_COLS, (int(c.replace(",", "")) for c in cells[1:])))
+    raise ValueError(f"{year}: 서울 행이 없습니다")
+
+
+DINE = {y: dineout_seoul(y) for y in range(2015, 2026)}
+MENUS = ["김치찌개 백반", "비빔밥", "삼계탕", "냉면", "자장면"]
+RISE = {m: (DINE[2025][m] - DINE[2015][m]) / DINE[2015][m] * 100 for m in MENUS}
+# 보기는 한 점(약 40%)이 아니라 구간으로 준다. 한 점이면 29.8% 처럼 두 보기 사이에
+# 걸린 값의 정답이 애매해진다. 구간은 아래 끝을 포함한다 (40.0% → «40~60%»)
+RISE_OPTS = ["20% 미만", "20~40%", "40~60%", "60% 이상"]
+
+
+def lunch_q(qid, item, unit_note, why):
+    """2025년 12월 가격을 보여 주고, 10년 전(2015년 12월)보다 몇 % 올랐는지 구간으로 고르게 한다."""
+    a, b, rise = DINE[2015][item], DINE[2025][item], RISE[item]
+    return choice(qid, f"10년간 서울 {item} 가격의 인상률은? "
+                       f"2025년 12월 평균 가격은 {item}{unit_note} {b:,}원입니다. "
+                       f"10년 전인 2015년 12월보다 몇 % 올랐을까요?",
+                  RISE_OPTS,
+                  RISE_OPTS[0 if rise < 20 else 1 if rise < 40 else 2 if rise < 60 else 3],
+                  f"참가격 서울 외식비 12월 기준 2015년 {a:,}원 → 2025년 {b:,}원 "
+                  f"(+{rise:.1f}%)",
+                  why)
+
+
+topic(
+    "lunch-price", "🍚", "점심값은 얼마나 올랐나",
+    "서울 대표 점심 메뉴 다섯 가지, 10년 동안 오른 폭",
+    "한국소비자원 참가격 (행정안전부 지역별 외식비)",
+    "https://www.price.go.kr/tprice/portal/servicepriceinfo/dineoutprice/dineOutPriceList.do",
+    [
+        lunch_q("m1", "김치찌개 백반", " 1인분",
+                "가장 흔한 점심 메뉴라 '얼마쯤'이라는 감이 몇 년 전 가격에 머물러 있어, "
+                "오른 폭을 작게 잡기 쉽습니다."),
+        lunch_q("m2", "비빔밥", " 1인분",
+                "자주 사 먹는 메뉴일수록 오른 폭을 작게 느낍니다. 조금씩 여러 번 "
+                "오르기 때문입니다."),
+        lunch_q("m3", "삼계탕", " 1인분",
+                "원래 비싼 메뉴는 오른 금액이 커 보여도, 비율로 따지면 다른 메뉴보다 "
+                "덜 올랐을 수 있습니다."),
+        lunch_q("m4", "냉면", " 1인분",
+                "'냉면 한 그릇 만 원 넘었다'는 기사는 많지만, 10년 전 값을 기억하는 "
+                "사람은 드뭅니다."),
+        lunch_q("m5", "자장면", " 1인분",
+                "'싼 메뉴'라는 인상이 오래 남아서, 많이 올랐을 거라는 생각을 잘 "
+                "못 합니다."),
+    ],
+    caveat="행정안전부가 시도별로 조사한 잠정치입니다. 가게가 문을 닫아 조사 대상이 "
+           "바뀌면 그 가격 변동도 그대로 들어가므로, 연도 간 차이에는 가게가 바뀐 "
+           "효과가 섞일 수 있습니다.")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -430,50 +498,6 @@ topic(
                "같은 사실을 뒤집어 물으면 전혀 다른 크기로 느껴집니다."),
     ])
 
-# ── 7. 환율 ──────────────────────────────────────────────────────
-fx = load_json("usdkrw.json")["rates"]
-FX = sorted((d, v["KRW"]) for d, v in fx.items() if "KRW" in v)
-hi_d, hi_v = max(FX, key=lambda x: x[1])
-lo_d, lo_v = min(FX, key=lambda x: x[1])
-avg_fx = mean(v for _, v in FX)
-under1200 = sum(1 for _, v in FX if v < 1200) / len(FX) * 100
-last_d, last_v = FX[-1]
-era = ("1997~1999년 외환위기" if hi_d < "2005" else
-       "2008~2009년 금융위기" if hi_d < "2012" else
-       "2020년 코로나" if hi_d < "2022" else "2022년 이후")
-
-topic(
-    "usdkrw", "💵", "원달러 환율 26년",
-    "1999년부터 오늘까지의 원달러 환율",
-    "Frankfurter (유럽중앙은행 고시)", "https://frankfurter.dev/",
-    [
-        slider("x1", "1999년 이후 원달러 환율의 최고 기록은?",
-               hi_v, "원", 1100, 1800, 25,
-               f"{hi_d} {hi_v:,.2f}원",
-               "최고치는 위기의 기억과 함께 남지만, 정확한 시점은 자주 헷갈립니다."),
-        choice("x2", "그 최고치를 찍은 시기는?",
-               ["1997~1999년 외환위기", "2008~2009년 금융위기",
-                "2020년 코로나", "2022년 이후"], era,
-               f"최고 {hi_v:,.2f}원 ({hi_d}). 이 데이터는 1999년부터라 "
-               f"1997~98년 외환위기 구간은 포함되어 있지 않습니다",
-               "데이터가 시작하는 시점을 확인하지 않으면 '역대 최고'를 잘못 "
-               "말하게 됩니다."),
-        slider("x3", "26년간의 평균 환율은?",
-               avg_fx, "원", 900, 1500, 25,
-               f"{FX[0][0]} ~ {FX[-1][0]} 거래일 {len(FX):,}일 평균 "
-               f"{avg_fx:,.0f}원 (최저 {lo_v:,.0f}원 · {lo_d})",
-               "최근 값이 기준점이 되어 과거 평균을 높게 잡게 됩니다."),
-        slider("x4", "환율이 1,200원 아래였던 날은 전체의 몇 %일까요?",
-               under1200, "%", 0, 100, 5,
-               f"거래일 {len(FX):,}일 중 1,200원 미만은 "
-               f"{sum(1 for _, v in FX if v < 1200):,}일",
-               "'원래 1,100원대였는데'라는 감각이 맞는지 비율로 확인해 봅니다."),
-        slider("x5", f"{last_d} 기준 환율은?",
-               last_v, "원", 1100, 1800, 25,
-               f"{last_d} {last_v:,.2f}원",
-               "가장 최근 값조차 기억은 며칠 전 뉴스에 묶여 있습니다."),
-    ])
-
 # ── 8. 도시 비교 ─────────────────────────────────────────────────
 CITY = {}
 for cid in ("seoul", "tokyo", "london", "singapore"):
@@ -630,84 +654,6 @@ topic(
                f"{l_latest}년 세계 평균 {wld:.1f}세 · 한국 {kor_l:.1f}세",
                "내가 사는 곳의 수준을 세계 평균으로 착각하기 쉽습니다."),
     ])
-
-# ── 11. 눈 ───────────────────────────────────────────────────────
-# '눈 온 날' = 하루 강설량 1cm 이상. ERA5 는 0.0x cm 같은 흔적값이 많아서
-# 0 초과로 세면 쌓이지도 않은 날까지 들어간다. 1·2·4번 모두 이 기준을 쓴다
-s = load_json("seoul_snow.json")["daily"]
-S = [{"d": dt.date.fromisoformat(t), "snow": sn, "lo": lo}
-     for t, sn, lo in zip(s["time"], s["snowfall_sum"], s["temperature_2m_min"])]
-SNOW_CM = 1.0
-snow_days = {y: sum(1 for x in S if x["d"].year == y and x["snow"] >= SNOW_CM)
-             for y in range(1990, 2025)}
-snow_avg = mean(snow_days.values())
-snow_90s = mean(snow_days[y] for y in range(1990, 2000))
-snow_10s = mean(snow_days[y] for y in range(2015, 2025))
-s_ratio = snow_10s / snow_90s if snow_90s else 0
-max_snow = max(S, key=lambda x: x["snow"])
-
-
-# 첫눈은 1월 1일부터 세면 거의 늘 1월이 된다. 겨울 한 철(7월~이듬해 6월)을 한 해로 본다.
-# 2024년 7월~ 은 겨울이 다 들어 있지 않아서 1990/91 ~ 2023/24 겨울만 센다
-def first_snow(y):
-    return next((x["d"] for x in S
-                 if dt.date(y, 7, 1) <= x["d"] < dt.date(y + 1, 7, 1)
-                 and x["snow"] >= SNOW_CM), None)
-
-
-firsts = [f for f in (first_snow(y) for y in range(1990, 2024)) if f]
-first_m = Counter(f.month for f in firsts)
-first_peak = first_m.most_common(1)[0]
-snow_month = {m: mean(sum(x["snow"] for x in S
-                          if x["d"].year == y and x["d"].month == m)
-                      for y in range(1990, 2025)) for m in range(1, 13)}
-snowiest_m = max(snow_month, key=snow_month.get)
-
-topic(
-    "seoul-snow", "❄️", "서울에 눈은 얼마나 오나",
-    "1990년부터 2024년까지, 서울의 하루 강설량",
-    "Open-Meteo Archive (ERA5 재분석)", "https://open-meteo.com/",
-    [
-        slider("s1", "1990~2024년, 서울에서 한 해에 눈이 온 날은 평균 며칠일까요?",
-               snow_avg, "일", 0, 40, 1,
-               f"1990~2024년 해마다 하루 강설량 1cm 이상인 날을 세어 평균하면 "
-               f"{snow_avg:.1f}일 (최소 {min(snow_days.values())}일 · "
-               f"최대 {max(snow_days.values())}일)",
-               "펑펑 내린 몇 날이 겨울 전체의 인상을 만듭니다. 쌓일 만큼 온 날은 "
-               "세어 보면 많지 않습니다."),
-        # 보기는 배수에 가장 가까운 것이 정답이 되게 경계를 둔다 (0.8배 → «약 20% 줄었다»)
-        choice("s2", "1990년대와 2015~2024년, 한 해 눈 온 날은 몇 배 차이일까요?",
-               ["절반 이하로 줄었다", "약 20% 줄었다", "거의 같다", "약 2배로 늘었다"],
-               ["절반 이하로 줄었다", "약 20% 줄었다", "거의 같다", "약 2배로 늘었다"][
-                   0 if s_ratio < 0.6 else 1 if s_ratio < 0.9
-                   else 2 if s_ratio < 1.5 else 3],
-               f"하루 강설량 1cm 이상인 날의 연평균을 비교하면 1990~1999년 "
-               f"{snow_90s:.1f}일 → 2015~2024년 {snow_10s:.1f}일 ({s_ratio:.2f}배)",
-               "'요즘은 눈이 안 온다'는 느낌은 기록과 맞을 수도, 과장일 수도 "
-               "있습니다. 세어 봐야 크기를 압니다."),
-        slider("s3", "1990~2024년, 서울에서 하루에 가장 많이 내린 눈은 몇 cm일까요?",
-               max_snow["snow"], "cm", 0, 40, 0.5,
-               f"1990~2024년 하루 강설량의 최댓값은 "
-               f"{max_snow['d'].year}년 {max_snow['d'].month}월 "
-               f"{max_snow['d'].day}일 {max_snow['snow']:.1f}cm",
-               "폭설 뉴스의 숫자는 관측소 한 곳의 적설입니다. 넓은 격자의 평균은 "
-               "그보다 작게 나옵니다."),
-        choice("s4", "1990~2024년, 서울의 첫눈은 보통 몇 월에 올까요?",
-               ["11월", "12월", "1월", "2월"], f"{first_peak[0]}월",
-               f"겨울(7월~이듬해 6월)마다 하루 강설량 1cm 이상인 첫날의 달을 세면 "
-               f"{len(firsts)}번 중 "
-               + " · ".join(f"{m}월 {first_m[m]}번" for m in (11, 12, 1, 2)),
-               "첫눈 소식은 살짝 날린 눈으로도 나옵니다. 쌓일 만큼 온 첫눈은 "
-               "그보다 늦습니다."),
-        choice("s5", "서울에서 눈이 가장 많이 내리는 달은 언제일까요?",
-               ["12월", "1월", "2월", "3월"], f"{snowiest_m}월",
-               f"1990~2024년 달마다 강설량을 합해 연평균하면 "
-               + " · ".join(f"{m}월 {snow_month[m]:.1f}cm" for m in (12, 1, 2, 3)),
-               "가장 추운 달과 눈이 가장 많은 달이 같은지는 따로 확인해야 합니다."),
-    ],
-    caveat="ERA5는 넓은 격자의 재분석 값이라 기상청 서울 관측소의 적설과 "
-           "다르게 나옵니다. 강설량은 내린 양이고, 쌓인 깊이(적설)와는 다른 값입니다.")
-
 
 # ════════════════════════════════════════════════════════════════
 def main() -> None:

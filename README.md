@@ -65,10 +65,10 @@ python -m http.server 8000      # index.html 을 더블클릭하면 안 됩니�
 | ⏰ | 우리는 얼마나 일하나 | Our World in Data |
 | 👶 | 인구와 출산 | World Bank |
 | 🌐 | 인터넷과 연결 | World Bank |
-| 💵 | 원달러 환율 26년 | Frankfurter (ECB) |
 | 🏙️ | 서울·도쿄·런던·싱가포르 | Open-Meteo Archive (ERA5) |
 | 🌎 | 지진은 얼마나 자주 | USGS |
 | 🩺 | 얼마나 오래 사나 | Our World in Data |
+| 🍚 | 점심값은 얼마나 올랐나 | 한국소비자원 참가격 (행정안전부) |
 
 ## Gemini 촌평 (선택)
 

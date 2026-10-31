@@ -17,6 +17,7 @@ import http.client
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -39,22 +40,14 @@ SEOUL = (37.5665, 126.9780)
 # 열대야가 15일에서 12일로 바뀌었다. 출처에 모델까지 적어야 다시 받아도 같은 값이 나온다.
 ERA5 = "&models=era5"
 
-SOURCES: list[tuple[str, str, str]] = [
-    # (저장 파일명, 설명, URL)
+SOURCES: list[tuple] = [
+    # (저장 파일명, 설명, URL) — 조회 화면이면 끝에 보낼 값(dict)이 하나 더 붙는다
     ("seoul_weather.json",
      "서울 일별 기온·강수 1950~2024 (Open-Meteo Archive · ERA5 고정)",
      "https://archive-api.open-meteo.com/v1/archive"
      f"?latitude={SEOUL[0]}&longitude={SEOUL[1]}"
      "&start_date=1950-01-01&end_date=2024-12-31"
      "&daily=temperature_2m_max,temperature_2m_min,precipitation_sum"
-     "&timezone=Asia%2FSeoul" + ERA5),
-
-    ("seoul_snow.json",
-     "서울 일별 강설량·최저기온 1990~2024 (Open-Meteo Archive · ERA5 고정)",
-     "https://archive-api.open-meteo.com/v1/archive"
-     f"?latitude={SEOUL[0]}&longitude={SEOUL[1]}"
-     "&start_date=1990-01-01&end_date=2024-12-31"
-     "&daily=snowfall_sum,temperature_2m_min"
      "&timezone=Asia%2FSeoul" + ERA5),
 
     ("seoul_air.json",
@@ -90,11 +83,6 @@ SOURCES: list[tuple[str, str, str]] = [
      "https://api.worldbank.org/v2/country/all/indicator/IT.NET.USER.ZS"
      "?format=json&per_page=20000&date=1990:2023"),
 
-    ("usdkrw.json",
-     "원달러 환율 1999~ (Frankfurter · ECB)",
-     "https://api.frankfurter.dev/v1/1999-01-04..2024-12-31"
-     "?base=USD&symbols=KRW"),
-
     ("wb_countries.json",
      "World Bank 국가 목록 — 대륙·소득군 같은 집계치를 걸러내는 데 씁니다",
      "https://api.worldbank.org/v2/country?format=json&per_page=400"),
@@ -124,10 +112,19 @@ SOURCES: list[tuple[str, str, str]] = [
      "?format=geojson&starttime=2000-01-01&endtime=2024-12-31"
      "&minmagnitude=3.0&minlatitude=33&maxlatitude=39.5"
      "&minlongitude=124&maxlongitude=132&limit=20000"),
+
+    # 참가격 외식비는 파일 주소가 없고, 연·월·지역을 골라 조회하는 화면이다.
+    # 그 조회를 그대로 보내고(POST) 돌아온 화면(HTML)을 손대지 않고 저장한다
+    *[(f"dineout/seoul_{y}-12.html",
+       f"서울 외식비 {y}년 12월 (한국소비자원 참가격 · 행정안전부 지역별 외식비)",
+       "https://www.price.go.kr/tprice/portal/servicepriceinfo/dineoutprice/dineOutPriceList.do",
+       {"searchYear": str(y), "searchMonth": "12", "searchArea": "020100000",
+        "searchOrExcel": "search", "pageNo": "1"})
+      for y in range(2015, 2026)],
 ]
 
 
-def get(url: str, dest: Path, tries: int = 4) -> int:
+def get(url: str, dest: Path, tries: int = 4, form: dict | None = None) -> int:
     """받는다. 잠깐의 실패면 기다렸다가 다시 시도한다.
 
     공개 API 는 대부분 호출 제한이 있고(429), 큰 파일은 받다가 끊기기도 한다
@@ -137,9 +134,11 @@ def get(url: str, dest: Path, tries: int = 4) -> int:
     wait = 5
     for i in range(tries):
         try:
-            req = urllib.request.Request(url, headers=UA)
+            body = urllib.parse.urlencode(form).encode() if form else None
+            req = urllib.request.Request(url, data=body, headers=UA)
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 data = r.read()
+            dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
             return len(data)
         except urllib.error.HTTPError as e:
@@ -160,14 +159,14 @@ def main() -> int:
     force = "--force" in sys.argv
     RAW.mkdir(parents=True, exist_ok=True)
     fail = 0
-    for name, desc, url in SOURCES:
+    for name, desc, url, *form in SOURCES:
         dest = RAW / name
         if dest.exists() and not force:
             print(f"  건너뜀  {name:<22} 이미 있음 ({dest.stat().st_size/1024:,.0f}KB)")
             continue
         t0 = time.time()
         try:
-            n = get(url, dest)
+            n = get(url, dest, form=form[0] if form else None)
             print(f"  받음    {name:<22} {n/1024:>7,.0f}KB  {time.time()-t0:.1f}s  {desc}")
         except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead) as e:
             print(f"  실패    {name:<22} {e}")
