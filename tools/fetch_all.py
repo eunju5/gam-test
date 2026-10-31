@@ -115,12 +115,13 @@ SOURCES: list[tuple] = [
 
     # 참가격 외식비는 파일 주소가 없고, 연·월·지역을 골라 조회하는 화면이다.
     # 그 조회를 그대로 보내고(POST) 돌아온 화면(HTML)을 손대지 않고 저장한다
-    *[(f"dineout/seoul_{y}-12.html",
-       f"서울 외식비 {y}년 12월 (한국소비자원 참가격 · 행정안전부 지역별 외식비)",
+    # 기준월은 받을 수 있는 가장 최근 달(2026년 9월)에 맞춘다. 해마다 같은 달 값을 받는다
+    *[(f"dineout/seoul_{y}-09.html",
+       f"서울 외식비 {y}년 9월 (한국소비자원 참가격 · 행정안전부 지역별 외식비)",
        "https://www.price.go.kr/tprice/portal/servicepriceinfo/dineoutprice/dineOutPriceList.do",
-       {"searchYear": str(y), "searchMonth": "12", "searchArea": "020100000",
+       {"searchYear": str(y), "searchMonth": "09", "searchArea": "020100000",
         "searchOrExcel": "search", "pageNo": "1"})
-      for y in range(2015, 2026)],
+      for y in range(2016, 2027)],
 ]
 
 

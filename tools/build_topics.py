@@ -86,15 +86,18 @@ def choice(qid, text, options, answer, basis, why):
 
 
 # ── 점심값 (목록 맨 앞 주제) ───────────────────────────────────────────────────
-# 참가격 외식비 화면(HTML)에서 '서울' 행을 읽는다. 해마다 12월 값을 그해 값으로 쓴다.
+# 참가격 외식비 화면(HTML)에서 '서울' 행을 읽는다. 해마다 같은 달(기준월) 값을 그해 값으로 쓴다.
+# 기준월은 받을 수 있는 가장 최근 달이다 — fetch_all.py 의 받는 달과 맞춘다.
 # 열 순서는 화면의 표 설명에 적힌 순서를 따르고, 그 설명이 바뀌면 멈춘다
+DINE_MONTH = 9                     # 2026년 9월이 가장 최근 자료
+Y0, Y1 = 2016, 2026                # 10년 전 · 올해
 DINE_COLS = ["냉면", "비빔밥", "김치찌개 백반", "삼겹살(환산전)", "삼겹살(환산후)",
              "자장면", "삼계탕", "칼국수", "김밥"]
 DINE_ORDER = "지역, 냉면, 비빔밥, 김치찌개(백반), 삼겹살(환산전), 삼겹살(환산후) ,자장면, 삼계탕, 칼국수, 김밥"
 
 
 def dineout_seoul(year):
-    h = io.open(RAW / "dineout" / f"seoul_{year}-12.html", encoding="utf-8").read()
+    h = io.open(RAW / "dineout" / f"seoul_{year}-{DINE_MONTH:02d}.html", encoding="utf-8").read()
     assert DINE_ORDER in h, f"{year}: 외식비 표의 열 순서가 바뀌었습니다"
     for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", h, re.S):
         cells = [re.sub(r"<[^>]+>|\s+", "", c)
@@ -104,48 +107,80 @@ def dineout_seoul(year):
     raise ValueError(f"{year}: 서울 행이 없습니다")
 
 
-DINE = {y: dineout_seoul(y) for y in range(2015, 2026)}
-MENUS = ["김치찌개 백반", "비빔밥", "삼계탕", "냉면", "자장면"]
-RISE = {m: (DINE[2025][m] - DINE[2015][m]) / DINE[2015][m] * 100 for m in MENUS}
-# 보기는 한 점(약 40%)이 아니라 구간으로 준다. 한 점이면 29.8% 처럼 두 보기 사이에
-# 걸린 값의 정답이 애매해진다. 구간은 아래 끝을 포함한다 (40.0% → «40~60%»)
-RISE_OPTS = ["20% 미만", "20~40%", "40~60%", "60% 이상"]
+DINE = {y: dineout_seoul(y) for y in range(Y0, Y1 + 1)}
+YM0, YM1 = f"{Y0}년 {DINE_MONTH}월", f"{Y1}년 {DINE_MONTH}월"
+# 메뉴 8개. 삼겹살은 양이 들쭉날쭉한 '환산전' 대신 200g 으로 맞춘 '환산후' 를 쓴다
+MENUS8 = ["냉면", "비빔밥", "김치찌개 백반", "삼겹살(환산후)", "자장면", "삼계탕",
+          "칼국수", "김밥"]
+NAME = {"삼겹살(환산후)": "삼겹살(200g)"}
+
+# A. 만 원 한 장으로 살 수 있는 메뉴 = 10,000원 이하
+under10k = {y: [m for m in MENUS8 if DINE[y][m] <= 10000] for y in (Y0, Y1)}
+
+# B. 냉면 기준월 값이 처음 10,000원을 넘은 해
+naengmyeon_10k = next(y for y in sorted(DINE) if DINE[y]["냉면"] > 10000)
+
+# C. 올해 자장면 한 그릇 값으로 살 수 있는 김밥 줄 수
+#    (김밥은 2017년부터 1줄 단위라 올해 값끼리만 비교한다)
+gimbap_per_jjm = DINE[Y1]["자장면"] / DINE[Y1]["김밥"]
+
+# D. 자장면이 10년 동안 오른 금액
+jjm_up = DINE[Y1]["자장면"] - DINE[Y0]["자장면"]
+
+# E. 10년 동안 가장 덜 오른 메뉴. 김밥은 2016년까지 1인분 · 2017년부터 1줄로 단위가
+#    바뀌어 10년 전 값과 비교할 수 없으므로 뺀다
+MENUS7 = [m for m in MENUS8 if m != "김밥"]
+RISE = {m: (DINE[Y1][m] - DINE[Y0][m]) / DINE[Y0][m] * 100 for m in MENUS7}
+least_menu = min(RISE, key=RISE.get)
 
 
-def lunch_q(qid, item, unit_note, why):
-    """2025년 12월 가격을 보여 주고, 10년 전(2015년 12월)보다 몇 % 올랐는지 구간으로 고르게 한다."""
-    a, b, rise = DINE[2015][item], DINE[2025][item], RISE[item]
-    return choice(qid, f"10년간 서울 {item} 가격의 인상률은? "
-                       f"2025년 12월 평균 가격은 {item}{unit_note} {b:,}원입니다. "
-                       f"10년 전인 2015년 12월보다 몇 % 올랐을까요?",
-                  RISE_OPTS,
-                  RISE_OPTS[0 if rise < 20 else 1 if rise < 40 else 2 if rise < 60 else 3],
-                  f"참가격 서울 외식비 12월 기준 2015년 {a:,}원 → 2025년 {b:,}원 "
-                  f"(+{rise:.1f}%)",
-                  why)
+def nm(m):
+    return NAME.get(m, m)
 
 
 topic(
     "lunch-price", "🍚", "점심값은 얼마나 올랐나",
-    "서울 대표 점심 메뉴 다섯 가지, 10년 동안 오른 폭",
+    "서울 대표 외식 메뉴 8가지, 10년 동안의 가격",
     "한국소비자원 참가격 (행정안전부 지역별 외식비)",
     "https://www.price.go.kr/tprice/portal/servicepriceinfo/dineoutprice/dineOutPriceList.do",
     [
-        lunch_q("m1", "김치찌개 백반", " 1인분",
-                "가장 흔한 점심 메뉴라 '얼마쯤'이라는 감이 몇 년 전 가격에 머물러 있어, "
-                "오른 폭을 작게 잡기 쉽습니다."),
-        lunch_q("m2", "비빔밥", " 1인분",
-                "자주 사 먹는 메뉴일수록 오른 폭을 작게 느낍니다. 조금씩 여러 번 "
-                "오르기 때문입니다."),
-        lunch_q("m3", "삼계탕", " 1인분",
-                "원래 비싼 메뉴는 오른 금액이 커 보여도, 비율로 따지면 다른 메뉴보다 "
-                "덜 올랐을 수 있습니다."),
-        lunch_q("m4", "냉면", " 1인분",
-                "'냉면 한 그릇 만 원 넘었다'는 기사는 많지만, 10년 전 값을 기억하는 "
-                "사람은 드뭅니다."),
-        lunch_q("m5", "자장면", " 1인분",
-                "'싼 메뉴'라는 인상이 오래 남아서, 많이 올랐을 거라는 생각을 잘 "
-                "못 합니다."),
+        slider("m1", f"{' · '.join(nm(m) for m in MENUS8)} — "
+                     f"이 8개 메뉴 중 만 원 한 장으로 사 먹을 수 있는 메뉴는 몇 개일까요? "
+                     f"{YM0}에는 {len(under10k[Y0])}개였습니다. {YM1}에는?",
+               len(under10k[Y1]), "개", 0, 8, 1,
+               f"서울 외식비 {DINE_MONTH}월 기준 10,000원 이하 메뉴 — {Y0}년 "
+               + " · ".join(nm(m) for m in under10k[Y0])
+               + f" → {Y1}년 " + " · ".join(nm(m) for m in under10k[Y1])
+               + f" (8개: {' · '.join(nm(m) for m in MENUS8)})",
+               "가격 하나하나보다 '만 원으로 뭘 먹을 수 있나'가 물가를 더 실감 나게 "
+               "보여 줍니다."),
+        choice("m2", f"서울 냉면 한 그릇 평균 가격({DINE_MONTH}월 기준)이 처음으로 "
+                     f"1만 원을 넘은 해는?",
+               ["2019년", "2020년", "2021년", "2022년", "2023년"], f"{naengmyeon_10k}년",
+               f"서울 냉면 {DINE_MONTH}월 가격 — "
+               + " · ".join(f"{y}년 {DINE[y]['냉면']:,}원" for y in range(2019, 2024)),
+               "'만 원 냉면' 기사는 여러 해에 걸쳐 나왔습니다. 평균이 실제로 넘은 해는 "
+               "기억보다 늦거나 이를 수 있습니다."),
+        slider("m3", f"{YM1} 서울에서 자장면 한 그릇 값으로 김밥 몇 줄을 살 수 있을까요?",
+               gimbap_per_jjm, "줄", 0, 5, 0.1,
+               f"{YM1} 자장면 {DINE[Y1]['자장면']:,}원 ÷ 김밥 "
+               f"{DINE[Y1]['김밥']:,}원 = {gimbap_per_jjm:.2f}줄",
+               "메뉴끼리 견주면 어느 쪽이 더 많이 올랐는지 감이 옵니다."),
+        slider("m4", f"10년 동안({YM0} → {YM1}) 서울 자장면 한 그릇은 몇 원 올랐을까요?",
+               jjm_up, "원", 0, 6000, 100,
+               f"서울 자장면 {DINE_MONTH}월 기준 {Y0}년 {DINE[Y0]['자장면']:,}원 → {Y1}년 "
+               f"{DINE[Y1]['자장면']:,}원 (+{jjm_up:,}원 · "
+               f"+{jjm_up / DINE[Y0]['자장면'] * 100:.1f}%)",
+               "'싼 메뉴'라는 인상이 오래 남아서, 오른 금액을 작게 잡기 쉽습니다."),
+        # 순위를 묻는 문항은 맨 끝에 둔다 — 앞에 두면 다른 문항의 힌트가 된다
+        choice("m5", f"10년 동안({YM0} → {YM1}) 가장 덜 오른 메뉴는?",
+               [nm(m) for m in MENUS7], nm(least_menu),
+               f"서울 외식비 {DINE_MONTH}월 기준 인상률 — "
+               + " · ".join(f"{nm(m)} +{RISE[m]:.1f}%"
+                            for m in sorted(MENUS7, key=RISE.get))
+               + ". 김밥은 2017년에 단위가 1인분에서 1줄로 바뀌어 비교에서 뺐습니다",
+               "원래 비싼 메뉴는 오른 금액이 커 보여도, 비율로 따지면 덜 올랐을 수 "
+               "있습니다."),
     ],
     caveat="행정안전부가 시도별로 조사한 잠정치입니다. 가게가 문을 닫아 조사 대상이 "
            "바뀌면 그 가격 변동도 그대로 들어가므로, 연도 간 차이에는 가게가 바뀐 "
